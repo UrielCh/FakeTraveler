@@ -11,6 +11,8 @@ import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity;
+import android.os.Handler;
+import android.provider.Settings;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -19,6 +21,14 @@ import android.webkit.WebView;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Toast;
+
+import androidx.appcompat.app.AppCompatActivity;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.ServerSocket;
+import java.net.Socket;
 
 import static cl.coders.faketraveler.MainActivity.SourceChange.CHANGE_FROM_EDITTEXT;
 import static cl.coders.faketraveler.MainActivity.SourceChange.CHANGE_FROM_MAP;
@@ -38,11 +48,13 @@ public class MainActivity extends AppCompatActivity {
     static WebView webView;
     static EditText editTextLat;
     static EditText editTextLng;
+    static EditText editTextAcc; // editText3
     static Context context;
     static SharedPreferences sharedPref;
     static SharedPreferences.Editor editor;
     static Double lat;
     static Double lng;
+    static Float accuracy;
     static int timeInterval;
     static int howManyTimes;
     static long endTime;
@@ -74,7 +86,7 @@ public class MainActivity extends AppCompatActivity {
         button1 = (Button) findViewById(R.id.button1);
         editTextLat = findViewById(R.id.editText0);
         editTextLng = findViewById(R.id.editText1);
-
+        editTextAcc = findViewById(R.id.editText3);
         button0.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View arg0) {
@@ -97,6 +109,14 @@ public class MainActivity extends AppCompatActivity {
         webView.loadUrl("file:///android_asset/map.html");
 
         try {
+            if (!isMockSettingsON(MainActivity.this)) {
+                Toast.makeText(MainActivity.this, "Please define the app as Mock GPS provide", Toast.LENGTH_LONG).show();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        try {
             PackageInfo pInfo = this.getPackageManager().getPackageInfo(getPackageName(), 0);
             currentVersion = pInfo.versionCode;
         } catch (PackageManager.NameNotFoundException e) {
@@ -111,8 +131,11 @@ public class MainActivity extends AppCompatActivity {
         try {
             lat = Double.parseDouble(sharedPref.getString("lat", ""));
             lng = Double.parseDouble(sharedPref.getString("lng", ""));
+            accuracy = Float.parseFloat(sharedPref.getString("accuracy", ""));
+
             editTextLat.setText(lat.toString());
             editTextLng.setText(lng.toString());
+            editTextAcc.setText(accuracy.toString());
         } catch (NumberFormatException e) {
             e.printStackTrace();
         }
@@ -128,7 +151,7 @@ public class MainActivity extends AppCompatActivity {
                         if (lng == null)
                             return;
 
-                        setLatLng(editTextLat.getText().toString(), lng.toString(), CHANGE_FROM_EDITTEXT);
+                        setLatLng(editTextLat.getText().toString(), lng.toString(), accuracy.toString(), CHANGE_FROM_EDITTEXT);
                     }
                 }
             }
@@ -155,7 +178,7 @@ public class MainActivity extends AppCompatActivity {
                         if (lat == null)
                             return;
 
-                        setLatLng(lat.toString(), editTextLng.getText().toString(), CHANGE_FROM_EDITTEXT);
+                        setLatLng(lat.toString(), editTextLng.getText().toString(), accuracy.toString(), CHANGE_FROM_EDITTEXT);
                     }
                 }
             }
@@ -169,6 +192,31 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        editTextAcc.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                String accText = editTextAcc.getText().toString();
+                if (!accText.isEmpty() && !accText.equals("-")) {
+                    if (srcChange != CHANGE_FROM_MAP) { // TODO fix that mess
+                        accuracy = Float.valueOf(accText);
+                        if (lat == null)
+                            return;
+                        setLatLng(lat.toString(), editTextLng.getText().toString(), accText, CHANGE_FROM_EDITTEXT);
+                    }
+                }
+            }
+        });
+
         endTime = sharedPref.getLong("endTime", 0);
 
         if (pendingIntent != null && endTime > System.currentTimeMillis()) {
@@ -178,7 +226,98 @@ public class MainActivity extends AppCompatActivity {
             editor.putLong("endTime", 0);
             editor.commit();
         }
+        /**
+         * Start socket listener
+         */
+        updateConversationHandler = new Handler();
+        this.serverThread = new Thread(new ServerThread());
+        this.serverThread.start();
+    }
 
+    public static boolean isMockSettingsON(Context context) {
+        // returns true if mock location enabled, false if not enabled.
+        if (Settings.Secure.getString(context.getContentResolver(),
+                Settings.Secure.ALLOW_MOCK_LOCATION).equals("0"))
+            return false;
+        else
+            return true;
+    }
+
+    /**
+     * socket part
+     */
+    private ServerSocket serverSocket;
+    Handler updateConversationHandler;
+    Thread serverThread = null;
+    public static final int SERVERPORT = 6000;
+
+    class ServerThread implements Runnable {
+        public void run() {
+            Socket socket = null;
+            try {
+                serverSocket = new ServerSocket(SERVERPORT);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    socket = serverSocket.accept();
+                    CommunicationThread commThread = new CommunicationThread(socket);
+                    new Thread(commThread).start();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    class CommunicationThread implements Runnable {
+        private Socket clientSocket;
+        private BufferedReader input;
+        public CommunicationThread(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+            try {
+                this.input = new BufferedReader(new InputStreamReader(this.clientSocket.getInputStream()));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        public void run() {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    String read = input.readLine();
+                    updateConversationHandler.post(new updateUIThread(read));
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    class updateUIThread implements Runnable {
+        private String msg;
+
+        public updateUIThread(String str) {
+            this.msg = str;
+        }
+        @Override
+        public void run() {
+            try {
+                if (msg != null) {
+                    String[] separated = msg.split(" ");
+                    //   if (!separated[0].isEmpty())
+                    if (!separated[1].isEmpty())
+                        editTextLat.setText(separated[0]);
+                    if (!separated[2].isEmpty())
+                        editTextLng.setText(separated[1]);
+                    if (!separated[3].isEmpty())
+                        editTextAcc.setText(separated[2]);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            applyLocation();
+        }
     }
 
     @Override
@@ -202,10 +341,10 @@ public class MainActivity extends AppCompatActivity {
      */
     static void checkSharedPrefs() {
         int version = sharedPref.getInt("version", 0);
-        String lat = sharedPref.getString("lat", "N/A");
-        String lng = sharedPref.getString("lng", "N/A");
-        String howManyTimes = sharedPref.getString("howManyTimes", "N/A");
-        String timeInterval = sharedPref.getString("timeInterval", "N/A");
+        String lat = sharedPref.getString("lat", "0.00");
+        String lng = sharedPref.getString("lng", "0.00");
+        String howManyTimes = sharedPref.getString("howManyTimes", "10");
+        String timeInterval = sharedPref.getString("timeInterval", "10");
         Long endTime = sharedPref.getLong("endTime", 0);
 
         if (version != currentVersion) {
@@ -237,14 +376,14 @@ public class MainActivity extends AppCompatActivity {
      * This method is called when "Apply" button is pressed.
      */
     protected static void applyLocation() {
-        if (latIsEmpty() || lngIsEmpty()) {
+        if (latIsEmpty() || lngIsEmpty() || accIsEmpty()) {
             toast(context.getResources().getString(R.string.MainActivity_NoLatLong));
             return;
         }
 
         lat = Double.parseDouble(editTextLat.getText().toString());
         lng = Double.parseDouble(editTextLng.getText().toString());
-
+        accuracy = Float.valueOf(editTextAcc.getText().toString());
         toast(context.getResources().getString(R.string.MainActivity_MockApplied));
 
         endTime = System.currentTimeMillis() + (howManyTimes - 1) * timeInterval * 1000;
@@ -263,7 +402,7 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
-        exec(lat, lng);
+        exec(lat, lng, accuracy);
 
         if (!hasEnded()) {
             toast(context.getResources().getString(R.string.MainActivity_MockLocRunning));
@@ -279,12 +418,12 @@ public class MainActivity extends AppCompatActivity {
      * @param lat latitude
      * @param lng longitude
      */
-    static void exec(double lat, double lng) {
+    static void exec(double lat, double lng, float accu) {
         try {
             //MockLocationProvider mockNetwork = new MockLocationProvider(LocationManager.NETWORK_PROVIDER, context);
-            mockNetwork.pushLocation(lat, lng);
+            mockNetwork.pushLocation(lat, lng, accu);
             //MockLocationProvider mockGps = new MockLocationProvider(LocationManager.GPS_PROVIDER, context);
-            mockGps.pushLocation(lat, lng);
+            mockGps.pushLocation(lat, lng, accu);
         } catch (Exception e) {
             toast(context.getResources().getString(R.string.MainActivity_MockNotApplied));
             changeButtonToApply();
@@ -355,6 +494,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Returns true editTextAcc has no text
+     */
+    static boolean accIsEmpty() {
+        return editTextAcc.getText().toString().isEmpty();
+    }
+
+    /**
      * Stops mocking the location.
      */
     protected static void stopMockingLocation() {
@@ -408,11 +554,15 @@ public class MainActivity extends AppCompatActivity {
      *
      * @param mLat      latitude
      * @param mLng      longitude
+     * @param mArc      accuracy
      * @param srcChange CHANGE_FROM_EDITTEXT or CHANGE_FROM_MAP, indicates from where comes the change
      */
-    static void setLatLng(String mLat, String mLng, SourceChange srcChange) {
+    static void setLatLng(String mLat, String mLng, String mArc, SourceChange srcChange) {
         lat = Double.parseDouble(mLat);
         lng = Double.parseDouble(mLng);
+        if (!mArc.isEmpty()) {
+            accuracy = Float.valueOf(mArc);
+        }
 
         if (srcChange == CHANGE_FROM_EDITTEXT) {
             webView.loadUrl("javascript:setOnMap(" + lat + "," + lng + ");");

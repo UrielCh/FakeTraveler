@@ -29,7 +29,7 @@ public class WebAppInterface {
                 String lat = str.substring(str.indexOf('(') + 1, str.indexOf(','));
                 String lng = str.substring(str.indexOf(',') + 2, str.indexOf(')'));
 
-                MainActivity.setLatLng(lat, lng, CHANGE_FROM_MAP);
+                MainActivity.setLatLng(lat, lng, "", CHANGE_FROM_MAP);
             }
         });
     }

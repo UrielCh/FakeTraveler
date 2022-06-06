@@ -1,6 +1,9 @@
 package cl.coders.faketraveler;
 
+import static cl.coders.faketraveler.MainActivity.sharedPrefKey;
+
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.location.Location;
 import android.location.LocationManager;
 import android.os.Build;
@@ -10,6 +13,7 @@ public class MockLocationProvider {
     String providerName;
     Context ctx;
 
+    static SharedPreferences sharedPref;
     /**
      * Class constructor
      *
@@ -20,7 +24,7 @@ public class MockLocationProvider {
     public MockLocationProvider(String name, Context ctx) {
         this.providerName = name;
         this.ctx = ctx;
-
+        sharedPref = ctx.getSharedPreferences(sharedPrefKey, Context.MODE_PRIVATE);
         LocationManager lm = (LocationManager) ctx.getSystemService(
                 Context.LOCATION_SERVICE);
         try
@@ -38,9 +42,10 @@ public class MockLocationProvider {
      *
      * @param lat latitude
      * @param lon longitude
+     * @param accuracy acuuracy in meters
      * @return Void
      */
-    public void pushLocation(double lat, double lon) {
+    public void pushLocation(double lat, double lon, float accuracy) {
         LocationManager lm = (LocationManager) ctx.getSystemService(
                 Context.LOCATION_SERVICE);
 
@@ -52,7 +57,7 @@ public class MockLocationProvider {
         //mockLocation.setAccuracy(16F);
         mockLocation.setSpeed(0.01F);
         mockLocation.setBearing(1F);
-        mockLocation.setAccuracy(3F);
+        mockLocation.setAccuracy(accuracy);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             mockLocation.setBearingAccuracyDegrees(0.1F);
         }

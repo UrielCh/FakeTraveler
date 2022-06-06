@@ -30,8 +30,8 @@ public class ApplyMockBroadcastReceiver extends BroadcastReceiver {
         try {
             double lat = Double.parseDouble(sharedPref.getString("lat", "0"));
             double lng = Double.parseDouble(sharedPref.getString("lng", "0"));
-
-            MainActivity.exec(lat, lng);
+            float accuracy = Float.parseFloat(sharedPref.getString("accuracy", "10"));
+            MainActivity.exec(lat, lng, accuracy);
 
             if (!MainActivity.hasEnded()) {
                 MainActivity.setAlarm(MainActivity.timeInterval);
